@@ -1,0 +1,134 @@
+##############################################################################################
+####This R script is for our paper "A novel phenotype imputation method with copula model"####
+##############################################################################################
+##############################################################################################
+
+library(mvtnorm)
+library(MASS)
+
+data=read.csv("data.csv",header=T) ### import data
+K=ncol(data)      ### coloum number
+N=nrow(data)      ### row number
+
+n1=N-length(which(is.na(data[,K]))) ### number of row which doesn't inlcude NA
+n2=length(which(is.na(data[,K]))) ### number of row inlcuding NA
+
+### divide data into two parts #######
+
+y1=data[1:n1,]
+y2=data[-(1:n1),]
+y21=y2[,1:(K-1)]
+
+### Estimation based on first part of the traits#######
+
+y_1mean=colMeans(y1)
+y_1sd=apply(y1,2,sd)
+Q=matrix(0,n1,K)
+for(i in 1:K){
+  Q[,i]=qnorm(pnorm(y1[,i],y_1mean[i],y_1sd[i]))
+}
+R=1/n1*t(Q)%*%Q
+
+################Density of copula################
+
+fcopula=function(u){
+  q0=matrix(qnorm(u),1,K)
+  q1=matrix(qnorm(u),K,1)
+  t=q0%*%(diag(rep(1,length=K))-solve(R))%*%q1
+  t0=1/sqrt(det(R))*exp(0.5*t)
+  return(as.numeric(t0))
+}
+
+#############The expectation based on MSE###########
+
+y22_mse=rep(0,n2)
+for(j in 1:n2){
+  y=y21[j,]  
+  u=1:K
+  for(i in 1:(K-1)){
+    u[i]=pnorm(y[,i],y_1mean[i],y_1sd[i])
+  }
+  integrand0=function(u_K){
+    t=c()
+    for(i in 1:length(u_K)){
+      t[i]=fcopula(c(u[-K],u_K[i]))*qnorm(u_K[i],y_1mean[K],y_1sd[K])
+    }
+    return(t)
+  }
+
+  f3=integrate(integrand0, lower = 0, upper =1)[[1]]
+
+  integrand=function(u_K){
+    t=c()
+    for(i in 1:length(u_K)){
+      t[i]=fcopula(c(u[-K],u_K[i]))
+    }
+    return(t)
+  }
+  f1=integrate(integrand, lower = 0, upper =1)[[1]]
+  result=f3/f1
+  y22_mse[j]=result
+}
+
+#############The maximum based on 0-1 loss###########
+
+y22_0_1=1:n2
+for(j in 1:n2){
+  y=y21[j,]
+  f0=function(y_K){  
+    u=1:K
+    for(i in 1:(K-1)){
+      u[i]=pnorm(y[,i],y_1mean[i],y_1sd[i])
+    }
+    u[3]=pnorm(y_K,y_1mean[3],y_1sd[3])
+    fcopula(u)*dnorm(y_K,y_1mean[3],y_1sd[3])
+  }
+  result=optimize(f0,c(2*min(y1),2*max(y1)),tol=0.0001,maximum = TRUE)[[1]]
+  y22_0_1[j]=result 
+}
+
+#############Imputation based on quantile loss function ###########
+
+F_conditional=function(y){
+  u=1:K
+  for(i in 1:K){
+    u[i]=pnorm(y[i],y_1mean[i],y_1sd[i])
+  }
+
+  integrand=function(u_K){
+    t=c()
+    for(i in 1:length(u_K)){
+      t[i]=fcopula(c(u[-K],u_K[i]))
+    }
+    return(t)
+  }  
+  t0=u[K]
+  f1=integrate(integrand, lower = 0, upper =t0)[[1]]
+  f3=integrate(integrand, lower = 0, upper =1)[[1]]
+  result=f1/f3
+  return(result)
+}
+
+y22_QL=1:n2
+
+for(j in 1:n2){
+  y=as.numeric(y21[j,])
+  g=function(y_K){
+    y=c(y,y_K)
+    F_conditional(y)-0.5
+  } 
+
+  y22_QL[j]=uniroot(g,c(2*min(y1),2*max(y1)),tol = 1e-6)[[1]]
+  return(y22_QL)
+}
+
+##return imputed values for traits with missing values
+
+y22_QL
+
+
+
+
+
+
+
